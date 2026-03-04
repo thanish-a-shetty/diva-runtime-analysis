@@ -1,19 +1,3 @@
-Perfect — your README is already strong.
-
-Now I’ll **edit it cleanly** to include:
-
-* Runtime Storage Monitoring
-* Dynamic Validation of PII Persistence
-* Sensitive Data Detection
-* Stack Trace Logging
-* Updated Repository Structure
-
-Below is your **fully updated README**, structured professionally and consistent with what you’ve implemented.
-
-You can copy-paste this entire version.
-
----
-
 # DIVA Runtime Security Analysis using Frida
 
 ## Overview
