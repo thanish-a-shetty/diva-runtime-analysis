@@ -2,55 +2,80 @@
 
 ## Overview
 
-This project demonstrates dynamic runtime instrumentation of an Android application using **Frida**.
+This project demonstrates **dynamic runtime instrumentation of Android applications using Frida** to analyze insecure data handling and authentication mechanisms.
 
-The objective was to analyze client-side authentication logic and extend the analysis to validate runtime storage behavior.
+The objective is to simulate a **runtime security audit system** capable of:
 
-The project demonstrates:
+* Detecting sensitive data written to local storage
+* Identifying hardcoded secrets in application logic
+* Demonstrating authentication bypass
+* Monitoring runtime behavior of Android applications
+* Generating structured JSON logs for security analysis
 
-* Hardcoded secret extraction
-* Authentication bypass
-* Runtime method interception
-* Runtime storage monitoring
-* Sensitive data detection
+Target Application:
 
-**Target Application:** DIVA (Damn Insecure and Vulnerable App)
-**Testing Type:** Dynamic Application Security Testing (DAST)
+**DIVA – Damn Insecure and Vulnerable App**
 
----
+Testing Approach:
 
-## Environment Setup
-
-* Android Emulator (API 33, arm64-v8a)
-* userdebug build (root-enabled)
-* Frida 17.6.2
-* frida-server deployed to `/data/local/tmp`
+Dynamic Application Security Testing (**DAST**) using runtime instrumentation.
 
 ---
 
-# Phase 1 – Authentication Analysis
+# Environment Setup
 
-## 1. Attached to Running Process
+* Android Emulator (Pixel device)
+* Android API Level: 33
+* CPU Architecture: arm64-v8a
+* Emulator Type: `userdebug` (root-enabled)
+* Frida Version: 17.6.2
+* Frida Server deployed at:
 
-```bash
+```
+/data/local/tmp/frida-server
+```
+
+Host System:
+
+macOS (Apple Silicon)
+
+---
+
+# Methodology
+
+## 1. Attach Frida to Running Application
+
+```
 frida -U -n Diva
 ```
 
+This attaches the Frida instrumentation engine to the running process.
+
 ---
 
-## 2. Enumerated Loaded Classes
+# 2. Enumerate Loaded Classes
 
-Identified target activity:
+Using Frida, loaded classes inside the application were enumerated to identify security-sensitive components.
+
+Example:
 
 ```
 jakhar.aseem.diva.HardcodeActivity
+jakhar.aseem.diva.InsecureDataStorage1Activity
+jakhar.aseem.diva.SQLInjectionActivity
 ```
 
 ---
 
-## 3. Hooked `String.equals()` to Intercept Password Comparisons
+# 3. Hardcoded Secret Discovery
 
-```javascript
+The application performs password validation using a **hardcoded secret**.
+
+A hook was implemented on `java.lang.String.equals()` to intercept password comparisons.
+
+Example hook:
+
+```
 Java.perform(function () {
 
     var StringClass = Java.use("java.lang.String");
@@ -68,27 +93,21 @@ Java.perform(function () {
 });
 ```
 
----
-
-## 4. Hardcoded Secret Identified at Runtime
-
-During authentication attempt:
+Observed runtime output:
 
 ```
 [COMPARE] 1234 vs vendorsecretkey => false
 ```
 
-Extracted hardcoded credential:
-
-```
-vendorsecretkey
-```
+This revealed the **hardcoded credential** embedded inside the application.
 
 ---
 
-## 5. Authentication Bypass via Method Override
+# 4. Authentication Bypass
 
-```javascript
+Client-side authentication logic was bypassed by overriding the validation method.
+
+```
 Java.perform(function () {
 
     var Hardcode = Java.use("jakhar.aseem.diva.HardcodeActivity");
@@ -97,166 +116,192 @@ Java.perform(function () {
 
         console.log("Bypassing authentication...");
         this.access(view);
+
     };
 
 });
 ```
 
-### Result
+Result:
 
-* Access granted regardless of password input
-* Client-side validation fully bypassed
-
----
-
-# Phase 2 – Runtime Storage Validation
-
-The analysis was extended to validate whether sensitive data is persisted during execution.
-
-## Objective
-
-Validate if credentials predicted during static inspection are actually written to device storage at runtime.
+* Authentication succeeded regardless of password input.
+* Demonstrates the risk of **client-side security validation**.
 
 ---
 
-## Hooked APIs
+# 5. Runtime Storage Monitoring
 
-* `android.app.SharedPreferencesImpl$EditorImpl.putString`
-* `android.database.sqlite.SQLiteDatabase.insert`
+A runtime monitoring module was implemented to intercept **data written to local storage**.
+
+Monitored APIs:
+
+* `SharedPreferences.putString()`
+* `SQLiteDatabase.insert()`
+
+Example event:
+
+```
+{
+ "event":"storage_write",
+ "storage_type":"SharedPreferences",
+ "key":"password",
+ "value":"sky123",
+ "pii_type":"password",
+ "sensitive":true
+}
+```
+
+This confirms that sensitive data was written to insecure storage.
 
 ---
 
-## Runtime Storage Monitoring Script
+# 6. PII Detection Engine
 
-```javascript
-Java.perform(function () {
+The monitoring module automatically detects common PII patterns such as:
 
-    console.log("=== Runtime Storage Monitoring Started ===");
+* Passwords
+* Authentication tokens
+* API keys
+* Email addresses
+* Phone numbers
+* Device identifiers
 
-    var EditorImpl = Java.use("android.app.SharedPreferencesImpl$EditorImpl");
+Example detection:
 
-    EditorImpl.putString.overload('java.lang.String', 'java.lang.String')
-        .implementation = function (key, value) {
-
-            console.log("\n[SharedPreferences WRITE]");
-            console.log("Key:", key);
-            console.log("Value:", value);
-
-            if (key.toLowerCase().includes("pass") ||
-                key.toLowerCase().includes("token") ||
-                key.toLowerCase().includes("secret")) {
-
-                console.log("[⚠️ SENSITIVE DATA DETECTED]");
-            }
-
-            return this.putString(key, value);
-        };
-
-});
+```
+{
+ "event":"storage_write",
+ "key":"user",
+ "value":"thanish@gmail.com",
+ "pii_type":"email",
+ "sensitive":true
+}
 ```
 
 ---
 
-## Example Runtime Output
+# 7. Runtime Stack Trace Capture
+
+Each storage event includes the **exact execution path** responsible for writing the data.
+
+Example:
 
 ```
-[SharedPreferences WRITE]
-Key: user
-Value: than
+jakhar.aseem.diva.InsecureDataStorage1Activity.saveCredentials()
+```
 
-[SharedPreferences WRITE]
-Key: password
-Value: sigma
-[⚠️ SENSITIVE DATA DETECTED]
+This enables developers to locate insecure code paths quickly.
+
+---
+
+# Example Runtime Output
+
+```
+{
+ "event":"storage_write",
+ "storage_type":"SharedPreferences",
+ "key":"password",
+ "value":"sky123",
+ "pii_type":"password",
+ "sensitive":true
+}
+```
+
+```
+{
+ "event":"storage_write",
+ "storage_type":"SharedPreferences",
+ "key":"user",
+ "value":"thanish@gmail.com",
+ "pii_type":"email",
+ "sensitive":true
+}
 ```
 
 ---
 
-## Key Findings
+# Repository Structure
 
-| Vulnerability                | Severity | Impact                      |
-| ---------------------------- | -------- | --------------------------- |
-| Hardcoded Secret             | High     | Credential extraction       |
-| Client-side Authentication   | Critical | Full bypass possible        |
-| Plaintext Credential Storage | High     | Local data exposure         |
-| Lack of Runtime Protection   | High     | Execution flow modification |
-
----
-
-## Security Impact
-
-An attacker can:
-
-* Extract embedded secrets
-* Modify validation logic at runtime
-* Bypass authentication controls
-* Confirm sensitive credential persistence
-* Identify insecure storage mechanisms
-
-This demonstrates why:
-
-* Client-side authentication is insecure
-* Secrets must not be hardcoded
-* Sensitive data must not be stored in plaintext
-* Runtime validation is essential for security auditing
+```
+diva-runtime-analysis
+│
+├── hooks
+│   ├── list_classes.js
+│   ├── equals_logger.js
+│   ├── hardcode_bypass.js
+│   └── runtime_storage_monitoring.js
+│
+├── dataset
+│   └── storage_logs.json
+│
+└── README.md
+```
 
 ---
 
-## Mitigation Recommendations
+# How to Run
 
-* Remove hardcoded secrets
-* Move authentication logic to server-side
-* Encrypt sensitive data before storage
-* Implement secure key management (Android Keystore)
-* Add root/tamper detection
-* Use runtime integrity verification (Play Integrity API)
+### Start Frida Server
 
----
-
-## How To Run
-
-### Start frida-server
-
-```bash
+```
 adb shell
 su
 /data/local/tmp/frida-server
 ```
 
-### Attach and Load Script
+---
 
-```bash
-frida -U -n Diva -l hooks/runtime_storage_monitor.js
+### Attach Monitoring Script
+
+```
+frida -U -n Diva -l hooks/runtime_storage_monitoring.js
 ```
 
 ---
 
-## Repository Structure
+### Collect JSON Dataset
 
 ```
-hooks/
-  ├── list_classes.js
-  ├── equals_logger.js
-  ├── hardcode_bypass.js
-  └── runtime_storage_monitor.js
+frida -U -n Diva -l hooks/runtime_storage_monitoring.js -q > storage_logs.json
 ```
 
 ---
 
-## Conclusion
+# Key Findings
 
-This project demonstrates a structured progression:
-
-1. Runtime extraction of embedded secrets
-2. Authentication bypass via dynamic instrumentation
-3. Runtime validation of sensitive data persistence
-4. Confirmation of insecure storage practices
-
-It highlights the importance of dynamic analysis in validating real-world exploitability beyond theoretical vulnerabilities.
+| Vulnerability              | Severity | Impact                            |
+| -------------------------- | -------- | --------------------------------- |
+| Hardcoded Secret           | High     | Credential extraction             |
+| Client-side Authentication | Critical | Full authentication bypass        |
+| Insecure Local Storage     | High     | Sensitive data leakage            |
+| Lack of Runtime Protection | High     | Application behavior manipulation |
 
 ---
 
-## Disclaimer
+# Security Impact
 
-This project was performed in a controlled lab environment on a deliberately vulnerable application for educational purposes only.
+An attacker with runtime instrumentation capabilities can:
 
+* Extract embedded secrets
+* Intercept sensitive data flows
+* Modify application behavior
+* Bypass authentication controls
+
+This demonstrates why **client-side security enforcement alone is insufficient**.
+
+---
+
+# Mitigation Recommendations
+
+* Remove hardcoded credentials
+* Move authentication logic to server-side
+* Implement code obfuscation
+* Add runtime integrity checks
+* Implement root/tamper detection
+* Use Play Integrity API for validation
+
+---
+
+# Disclaimer
+
+This research was conducted in a controlled environment using a deliberately vulnerable application (**DIVA**) for educational and security research purposes only.
